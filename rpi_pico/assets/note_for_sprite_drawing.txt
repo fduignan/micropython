@@ -1,0 +1,3 @@
+if you place a 1 pixel black border around your sprite then you should not have
+to erase it if you move it across a black background 1 pixel at a time.
+This eliminates flicker and speeds up movement 

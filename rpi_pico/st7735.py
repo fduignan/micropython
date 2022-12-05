@@ -103,14 +103,16 @@ class st7735:
         
     def command(self,cmd):
         self.a0.value(0)
-        msg=bytearray()
-        msg.append(cmd)
-        self.spi.write(msg)        
-    def data(self,cmd):
+        self.spi_write(cmd)
+        #msg=bytearray()
+        #msg.append(cmd)
+        #self.spi.write(msg)        
+    def data(self,data):
         self.a0.value(1)
-        msg=bytearray()
-        msg.append(cmd)
-        self.spi.write(msg)        
+        self.spi_write(data)
+        #msg=bytearray()
+        #msg.append(cmd)
+        #self.spi.write(msg)        
     def openAperture(self,x1,y1,x2,y2):
         self.command(0x2a)
         self.data(x1 >> 8)
@@ -123,8 +125,19 @@ class st7735:
         self.data(y2 >> 8)
         self.data(y2 & 0xff)        
         self.command(0x2c)
+    
     def putPixel(self,x,y,colour):
-        self.openAperture(x,y,x+1,y+1)        
+        self.command(0x2a)
+        self.data(x >> 8)
+        self.data(x & 0xff)
+        self.data(x+1 >> 8)
+        self.data(x+1 & 0xff)
+        self.command(0x2b)
+        self.data(y >> 8)
+        self.data(y & 0xff)
+        self.data(y+1 >> 8)
+        self.data(y+1 & 0xff)        
+        self.command(0x2c)      
         self.a0.value(1)
         self.fill_block(colour,1)
         
@@ -136,6 +149,14 @@ class st7735:
         msg.append(colour & 0xff)
         self.spi.write(msg)    
     def drawLine(self,x0,y0,x1,y1,colour):
+        if (x0==x1):
+            # vertical line so use fill rectanlge (faster)
+            self.fillRectangle(x0,y0,1,y1-y0,colour)
+            return
+        if (y0==y1):
+            # vertical line so use fill rectanlge (faster)
+            self.fillRectangle(x0,y0,x1-x0,1,colour)
+            return
         if ( (abs(y1-y0) < abs(x1-x0))):
              if (x0 > x1):
                  self.drawLineLowSlope(x1,y1,x0,y0,colour)
@@ -194,7 +215,7 @@ class st7735:
         while(pixelcount >0):
             pixelcount = pixelcount-1          
             msg.append(colour >> 8)
-        #   msg.append(colour & 0xff)
+            msg.append(colour & 0xff)
         self.spi.write(msg)
     @micropython.asm_thumb
     def fill_block(r0,r1,r2):
@@ -208,7 +229,7 @@ class st7735:
         # SSPDR Register OFFSET 8
         # SSPSR Register OFFSET c
         push({r1,r2,r3,r4,r7})
-        # Convoluted load of a 32 value into r7
+        # Convoluted load of a 32 bit value into r7
         mov(r7,0x40)
         lsl(r7,r7,8)
         add(r7,0x03)
@@ -220,75 +241,39 @@ class st7735:
         label(fill_block_loop_start)
         cmp(r2,0)
         beq(fill_block_exit)        
-        mov(r3,r1) # read next byte
-        lsr(r3,r3,8)
+        mov(r3,r1) # read next byte from colour (there is an endian-ness change)
         strb(r3,[r7,8]) # write to SPI
         label(fill_block_spi_wait1)        
-        ldr(r3,[r7,0xc]) # read next byte
-        and_(r3,r4)
-        beq(fill_block_spi_wait1)
+        ldr(r3,[r7,0xc]) # read status
+        and_(r3,r4) # mask for busy flags
+        beq(fill_block_spi_wait1) # if busy go back and wait
         
-        mov(r3,r1) # read next byte        
+        mov(r3,r1) # read next byte from colour (there is an endian-ness change)
+        lsr(r3,r3,8) 
         strb(r3,[r7,8]) # write to SPI        
         sub(r2,r2,1) # decrement count                
         label(fill_block_spi_wait2)        
-        ldr(r3,[r7,0xc]) # read next byte
-        and_(r3,r4)
-        beq(fill_block_spi_wait2)
+        ldr(r3,[r7,0xc]) # read status
+        and_(r3,r4) # mask for busy flags
+        beq(fill_block_spi_wait2) # if busy go back and wait
         b(fill_block_loop_start)
-        #movw(r4,0x2000)
-        #movws(r4,0x20004000)
-        #movt(r4,0x2000)        
-        #ldrh(r3,[r1])
-        #strh(r3,[r4])
-        #add(r0, r1, r2)
         label(fill_block_exit)
         pop ({r1,r2,r3,r4,r7})
         
+   
     @micropython.asm_thumb
-    def write_block(r0,r1,r2, r3):
-        # pointer to self passed in r0
-        # r1 points at 16 bit data to be written
-        # r2 countains count
-        # Going to use SPI0.
-        # Base address = 0x4003c000
-        # SSPCR0 Register OFFSET 0
-        # SSPCR1 Register OFFSET 4
-        # SSPDR Register OFFSET 8
-        # SSPSR Register OFFSET c
-        push({r1,r2,r3,r4,r5,r6,r7})
-        # Convoluted load of a 32 value into r7
-        mov(r7,0x40)
-        lsl(r7,r7,8)
-        add(r7,0x03)
-        lsl(r7,r7,8)
-        add(r7,0xc0)
-        lsl(r7,r7,8)
-        add(r7,0x00)
-        mov(r4,2)
-        #ldr(r0,[r7,0]) # returns 1c7
-        #ldr(r0,[r7,4]) # returns 2
-        #ldr(r0,[r7,0xc]) # returns 3
-        label(write_block_loop_start)
-        cmp(r2,0)
-        beq(write_block_exit)        
-        ldr(r3,[r1,0]) # read next byte
-        sub(r2,r2,1) # decrement count
-        add(r1,r1,1) # point at next byte
-        str(r3,[r7,8]) # write to SPI
-        label(write_block_spi_wait)        
-        ldr(r3,[r7,0xc]) # read next byte
-        and_(r3,r4)
-        beq(write_block_spi_wait)
-        b(write_block_loop_start)
-        #movw(r4,0x2000)
-        #movws(r4,0x20004000)
-        #movt(r4,0x2000)        
-        #ldrh(r3,[r1])
-        #strh(r3,[r4])
-        #add(r0, r1, r2)
-        label(write_block_exit)
-        pop ({r1,r2,r3,r4,r5,r6,r7})
+    def spi_write(r0,r1):
+        # on entry r0 points to self
+        # r1 contains value to write to SPI bus
+        mov(r2,0x40)
+        lsl(r2,r2,8)
+        add(r2,0x03)
+        lsl(r2,r2,8)
+        add(r2,0xc0)
+        lsl(r2,r2,8)
+        add(r2,0x00)
+        str(r1,[r2,8])
+        
     def drawRectangle(self,x1,y1,w,h,Colour):
         self.drawLine(x1,y1,x1+w,y1,Colour)
         self.drawLine(x1,y1,x1,y1+h,Colour)
@@ -348,6 +333,9 @@ class st7735:
         rvalue = rvalue + ((g & (0b111)) << 13)
         rvalue = rvalue + ((r >> 3) << 8)
         rvalue = rvalue + ((b >> 3) << 3)
+        #b1=rvalue & 0xff;
+        #b2=rvalue >> 8;
+        #rvalue = (b1<<8)+b2
         return rvalue
     def drawCircle(self,x0,y0,radius,colour):
         # Reference : https://en.wikipedia.org/wiki/Midpoint_circle_algorithm
